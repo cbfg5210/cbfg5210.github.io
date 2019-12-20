@@ -1,68 +1,173 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>MediaDevices</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-</head>
-<body>
-  <!--video用于显示媒体设备的视频流，自动播放-->
-  <video id="video" autoplay style="width: 240px;height: 320px"></video>
-  <!--按钮-->
-  <div style="display: flex;">
-    <div>
-      <div><button id="capture1">拍照</button></div>
-      <canvas id="canvas1" width="240" height="320" style="width: 240px;height: 320px"></canvas>
-    </div>
-    <div>
-      <div><button id="capture2">摄像</button></div>
-      <canvas id="canvas2" width="240" height="320" style="width: 240px;height: 320px"></canvas>
-    </div>
-  </div>
+<template lang='pug'>
+  #CaptureAudio
+    .audio: audio(
+      :src="currAudio"
+      controls
+      v-if="showAudio"
+    )
+    .controller
+      .row
+        .btn(@click="record" v-if='!showAudio && !recording') 录音
+        .btn(@click="stop" v-if="recording") 停止
+        .btn(@click="recordAgain" v-if='showAudio') 重录
+        .btn(@click="saveAndExit" v-if='showAudio') 保存
+      .row(v-if='recording')
+        div 剩余录制时间 {{Math.floor(remainTime/60)}}:{{Math.floor(remainTime%60)}}
+    canvas(ref="canvas" v-show="false")
+    c-Loading(v-show="uploading" text="音频上传中, 请稍等...")
+</template>
 
-  <a download='snap.png' id="download">下载图片</a>
+<script>
+  import {mapState} from "vuex"
 
-  <script>
-    let video = document.getElementById("video");
-    let canvas1 = document.getElementById("canvas1");
-    let context1 = canvas1.getContext("2d");
-    let canvas2 = document.getElementById("canvas2");
-    let context2 = canvas2.getContext("2d");
-
-    //访问用户媒体设备的兼容方法
-    let mediaDevices = navigator.mediaDevices || navigator.webkitGetUserMedia;
-    if (mediaDevices) {
-      mediaDevices.getUserMedia({ audio: true, video: true })
-        .then(stream => {
-          //兼容webkit内核浏览器
-          let url = window.URL || window.webkitURL;
-          //将视频流设置为video元素的源
-          video.src = url.createObjectURL(stream);
-          //播放视频
-          video.play();
-        })
-        .catch(error => {
-          console.log("访问用户媒体设备失败：",error.name,error.message);
+  export default {
+    name: "CaptureAudio",
+    data () {
+      return {
+        chunks: [],
+        recording: false,
+        currAudio: null, // 当前录制的视频路径
+        currBlob: null, // 当前视频二进制
+        recorder: null, // MediaRecorder
+        uploading: false, // 上传中
+        showAudio: false, // 显示播放器
+        interval: null, // 计时器
+        totalTime: 60 * 3, // 剩余总时间
+        remainTime: 60 * 3, // 剩余录制时间
+      }
+    },
+    computed: {
+      ...mapState({
+        chosenChapter: state => state.chapter.chosen
+      })
+    },
+    mounted () {
+      if (!navigator.mediaDevices) {
+        alert('您的浏览器不支持获取用户设备');
+        this.$router.back()
+        return;
+      }
+      if (!window.MediaRecorder) {
+        alert('您的浏览器不支持录音');
+        this.$router.back()
+        return;
+      }
+      this.requestAccess()
+    },
+    methods: {
+      // 获取设备权限
+      requestAccess() {
+        let constraints = {
+          audio: {
+            sampleRate: 48000,
+            channelCount: 0, // 0 捕获所有支持的声道 1 单声道 2 立体声
+            volume: 1, // 0~1
+            noiseSuppression: true, // 抑制背景噪音
+          },
+          video: false
+        }
+        navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+          this.recorder = new window.MediaRecorder(stream);
+          console.log("recorder", this.recorder)
+          this.recorder.ondataavailable = this.getRecordingData;
+          this.recorder.onstop = this.saveRecordingData;
+        }, error => {
+          alert(error);
         });
-    } else {
-      alert("你的浏览器不支持访问用户媒体设备");
+      },
+
+      // 获取录制数据
+      getRecordingData (e) {
+        console.log("getRecordingData", e)
+        this.chunks.push(e.data)
+      },
+
+      async saveRecordingData () {
+        clearInterval(this.interval)
+        this.remainTime = this.totalTime
+        this.showAudio = true
+        this.recording = false
+        let blob = new Blob(this.chunks, { 'type' : 'audio/ogg; codecs=opus' })
+        this.currBlob = blob
+        console.log("blob", blob)
+        console.log("blob.size", blob.size)
+        this.currAudio = URL.createObjectURL(blob)
+        console.log(this.currAudio)
+        this.chunks = []
+        await this.save()
+      },
+
+      // 录制
+      record () {
+        this.recording = true
+        this.recorder.start();
+        this.interval = setInterval(() => {
+          -- this.remainTime
+          if (this.remainTime <= 0 ) {
+            clearInterval(this.interval)
+            this.remainTime = this.totalTime
+            this.stop()
+          }
+        }, 1000)
+      },
+
+      // 重录
+      recordAgain () {
+        this.showAudio = false
+        this.currAudio = null
+        this.record()
+      },
+
+      // 停止
+      async stop () {
+        this.recorder.stop();
+      },
+
+      // 上传到OSS
+      async save () {
+        this.uploading = true
+        let res = await this.$utils.uploadToOss(this.currBlob, [], 'audio', {ext: '.mp3'})
+        this.currAudio = res.url
+        this.uploading = false
+      },
+
+      // 保存并退出
+      async saveAndExit () {
+        await this.$postData('addRes', {
+          resPath: this.currAudio, // 资源路径
+        })
+        this.$router.back()
+      },
+
     }
+  }
+</script>
 
-    // 拍照
-    document.getElementById("capture1").addEventListener("click",function(){
-      context1.drawImage(video,0,0,240,320);
-      // 设置下载图片的数据
-      document.getElementById('download').href = canvas1.toDataURL('image/png');
-    });
-
-    // 摄像模拟 (canvas定时截取)
-    document.getElementById("capture2").addEventListener("click",function(){
-      setInterval(() => {
-        context2.drawImage(video,0,0,240,320);
-      }, 10);
-    });
-
-
-  </script>
-</body>
-</html>
+<style scoped lang='stylus'>
+  .audio
+    audio
+      width: 100%
+  .controller
+    margin-top: 1em
+    .row
+      display: flex
+      justify-content space-around
+      margin-top: .2rem
+      &.camera
+        display: flex
+        justify-content: flex-start
+        align-items: center
+        .text
+          margin-right: 1em
+          font-size: 1.2em
+      .btn
+        width: 2rem
+        height: 2rem
+        display: flex
+        justify-content: center
+        align-items: center
+        background-color: rgba(35,184,255,1)
+        color: #fff
+        border-radius: 50%
+        font-size: .6rem
+</style>
