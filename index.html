@@ -1,83 +1,68 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>enumerateDevices</title>
+  <meta charset="UTF-8">
+  <title>MediaDevices</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 </head>
-
 <body>
-  <div id="container">
-    <h1>enumerateDevices</h1>
-    <div class="select">
-      <label for="audioSource">Audio source: </label><select id="audioSource"></select>
+  <!--video用于显示媒体设备的视频流，自动播放-->
+  <video id="video" autoplay style="width: 240px;height: 320px"></video>
+  <!--按钮-->
+  <div style="display: flex;">
+    <div>
+      <div><button id="capture1">拍照</button></div>
+      <canvas id="canvas1" width="240" height="320" style="width: 240px;height: 320px"></canvas>
     </div>
-    <div class="select">
-      <label for="videoSource">Video source: </label><select id="videoSource"></select>
+    <div>
+      <div><button id="capture2">摄像</button></div>
+      <canvas id="canvas2" width="240" height="320" style="width: 240px;height: 320px"></canvas>
     </div>
-    <video muted autoplay></video>
   </div>
 
+  <a download='snap.png' id="download">下载图片</a>
+
   <script>
-    let videoElement = document.querySelector('video');
-    let audioSelect = document.querySelector('select#audioSource');
-    let videoSelect = document.querySelector('select#videoSource');
+    let video = document.getElementById("video");
+    let canvas1 = document.getElementById("canvas1");
+    let context1 = canvas1.getContext("2d");
+    let canvas2 = document.getElementById("canvas2");
+    let context2 = canvas2.getContext("2d");
 
-    navigator.mediaDevices.enumerateDevices()
-      .then(gotDevices).then(getStream).catch(handleError);
-
-    audioSelect.onchange = getStream;
-    videoSelect.onchange = getStream;
-
-    // 获取设备
-    function gotDevices(deviceInfos) {
-      for (let i = 0; i !== deviceInfos.length; ++i) {
-        let deviceInfo = deviceInfos[i];
-        console.log(deviceInfo);
-        let option = document.createElement('option');
-        option.value = deviceInfo.deviceId;
-        // 音频设备
-        if (deviceInfo.kind === 'audioinput') {
-          option.text = deviceInfo.label || 'microphone ' + (audioSelect.length + 1);
-          audioSelect.appendChild(option);
-        // 视频设备
-        } else if (deviceInfo.kind === 'videoinput') {
-          option.text = deviceInfo.label || 'camera ' + (videoSelect.length + 1);
-          videoSelect.appendChild(option);
-        } else {
-          console.log('Found one other kind of source/device: ', deviceInfo);
-        }
-      }
-    }
-
-    function getStream() {
-      if (window.stream) {
-        window.stream.getTracks().forEach(function(track) {
-          track.stop();
+    //访问用户媒体设备的兼容方法
+    let mediaDevices = navigator.mediaDevices || navigator.webkitGetUserMedia;
+    if (mediaDevices) {
+      mediaDevices.getUserMedia({ audio: true, video: true })
+        .then(stream => {
+          //兼容webkit内核浏览器
+          let url = window.URL || window.webkitURL;
+          //将视频流设置为video元素的源
+          video.src = url.createObjectURL(stream);
+          //播放视频
+          video.play();
+        })
+        .catch(error => {
+          console.log("访问用户媒体设备失败：",error.name,error.message);
         });
-      }
-
-      let constraints = {
-        audio: {
-          deviceId: {exact: audioSelect.value}
-        },
-        video: {
-          deviceId: {exact: videoSelect.value}
-        }
-      };
-
-      navigator.mediaDevices.getUserMedia(constraints).then(gotStream).catch(handleError);
+    } else {
+      alert("你的浏览器不支持访问用户媒体设备");
     }
 
-    function gotStream(stream) {
-      window.stream = stream; // make stream available to console
-      videoElement.srcObject = stream;
-    }
+    // 拍照
+    document.getElementById("capture1").addEventListener("click",function(){
+      context1.drawImage(video,0,0,240,320);
+      // 设置下载图片的数据
+      document.getElementById('download').href = canvas1.toDataURL('image/png');
+    });
 
-    function handleError(error) {
-      console.log('Error: ', error);
-    }
+    // 摄像模拟 (canvas定时截取)
+    document.getElementById("capture2").addEventListener("click",function(){
+      setInterval(() => {
+        context2.drawImage(video,0,0,240,320);
+      }, 10);
+    });
+
+
   </script>
-
 </body>
 </html>
